@@ -1,5 +1,5 @@
 defmodule Arc.File do
-  defstruct [:path, :file_name, :binary]
+  defstruct [:path, :file_name, :binary, :content_type]
 
   def generate_temporary_path(file \\ nil) do
     extension = Path.extname((file && file.path) || "")
@@ -36,9 +36,9 @@ end
   end
 
   # Accepts a map conforming to %Plug.Upload{} syntax
-  def new(%{filename: filename, path: path}) do
+  def new(%{filename: filename, path: path, content_type: content_type}) do
     case File.exists?(path) do
-      true -> %Arc.File{path: path, file_name: filename}
+      true -> %Arc.File{path: path, file_name: filename, content_type: content_type}
       false -> {:error, :invalid_file_path}
     end
   end
