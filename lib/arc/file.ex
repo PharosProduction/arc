@@ -36,6 +36,13 @@ end
   end
 
   # Accepts a map conforming to %Plug.Upload{} syntax
+  def new(%{filename: filename, path: path}) do
+    case File.exists?(path) do
+      true -> %Arc.File{path: path, file_name: filename, content_type: content_type}
+      false -> {:error, :invalid_file_path}
+    end
+  end
+
   def new(%{filename: filename, path: path, content_type: content_type}) do
     case File.exists?(path) do
       true -> %Arc.File{path: path, file_name: filename, content_type: content_type}
