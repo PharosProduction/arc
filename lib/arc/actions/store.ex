@@ -44,7 +44,7 @@ defmodule Arc.Actions.Store do
   end
 
   defp ensure_all_success(responses) do
-    errors = Enum.filter(responses, fn({version, resp}) -> elem(resp, 0) == :error end)
+    errors = Enum.filter(responses, fn({_version, resp}) -> elem(resp, 0) == :error end)
     if Enum.empty?(errors), do: responses, else: errors
   end
 
@@ -76,6 +76,7 @@ defmodule Arc.Actions.Store do
   defp put_version(definition, version, {result, scope}) do
     case result do
       {:error, error} -> {:error, error}
+      {:ok, nil} -> {:ok, nil}
       {:ok, file} ->
         file_name = Arc.Definition.Versioning.resolve_file_name(definition, version, {file, scope})
         file      = %Arc.File{file | file_name: file_name}

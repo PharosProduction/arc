@@ -25,6 +25,7 @@ Browse the readme below, or jump to [a full example](#full-example).
     - [S3 Configuration](#s3-configuration)
     - [Storage Directory](#storage-directory)
     - [Specify multiple buckets](#specify-multiple-buckets)
+    - [Specify multiple asset hosts](#specify-multiple-asset-hosts)
     - [Access Control Permissions](#access-control-permissions)
     - [S3 Object Headers](#s3-object-headers)
     - [File Validation](#file-validation)
@@ -41,13 +42,12 @@ Add the latest stable release to your `mix.exs` file, along with the required de
 ```elixir
 defp deps do
   [
-    arc: "~> 0.10.0",
+    arc: "~> 0.11.0",
 
     # If using Amazon S3:
     ex_aws: "~> 2.0",
     ex_aws_s3: "~> 2.0",
     hackney: "~> 1.6",
-    httpoison: "~> 0.13",
     poison: "~> 3.1",
     sweet_xml: "~> 0.6"
   ]
@@ -75,6 +75,7 @@ Arc ships with integrations for Local Storage and S3.  Alternative storage provi
 * **Manta** - https://github.com/onyxrev/arc_manta
 * **OVH** - https://github.com/stephenmoloney/arc_ovh
 * **Google Cloud Storage** - https://github.com/martide/arc_gcs
+* **Microsoft Azure Storage** - https://github.com/phil-a/arc_azure
 
 ### Usage with Ecto
 
@@ -130,7 +131,7 @@ Example usage as general file store:
 Avatar.store("/path/to/my/file.png") #=> {:ok, "file.png"}
 
 # Store any remotely accessible file
-Avatar.store("http://example.com/image.png") #=> {:ok, "file.png"}
+Avatar.store("http://example.com/file.png") #=> {:ok, "file.png"}
 
 # Store a file directly from a `%Plug.Upload{}`
 Avatar.store(%Plug.Upload{filename: "file.png", path: "/a/b/c"}) #=> {:ok, "file.png"}
@@ -157,6 +158,7 @@ To transform an image, the definition module must define a `transform/2` functio
 
 This transform handler accepts the version atom, as well as the file/scope argument, and is responsible for returning one of the following:
   * `:noaction` - The original file will be stored as-is.
+  * `:skip` - Nothing will be stored for the provided version.
   * `{executable, args}` - The `executable` will be called with `System.cmd` with the format `#{original_file_path} #{args} #{transformed_file_path}`.
   * `{executable, fn(input, output) -> args end}` - If your executable expects arguments in a format other than the above, you may supply a function to the conversion tuple which will be invoked to generate the arguments. The arguments can be returned as a string (e.g. – `" #{input} -strip -thumbnail 10x10 #{output}"`) or a list (e.g. – `[input, "-strip", "-thumbnail", "10x10", output]`) for even more control.
   * `{executable, args, output_extension}` - If your transformation changes the file extension (eg, converting to `png`), then the new file extension must be explicit.
@@ -165,7 +167,7 @@ This transform handler accepts the version atom, as well as the file/scope argum
 
 As images are one of the most commonly uploaded filetypes, Arc has a recommended integration with ImageMagick's `convert` tool for manipulation of images.  Each upload definition may specify as many versions as desired, along with the corresponding transformation for each version.
 
-The expected return value of a `transform` function call must either be `:noaction`, in which case the original file will be stored as-is, or `{:convert, transformation}` in which the original file will be processed via ImageMagick's `convert` tool with the corresponding transformation parameters.
+The expected return value of a `transform` function call must either be `:noaction`, in which case the original file will be stored as-is, `:skip`, in which case nothing will be stored, or `{:convert, transformation}` in which the original file will be processed via ImageMagick's `convert` tool with the corresponding transformation parameters.
 
 The following example stores the original file, as well as a squared 100x100 thumbnail version which is stripped of comments (eg, GPS coordinates):
 
@@ -229,7 +231,7 @@ function convert {
         --headless \
         --convert-to html \
         --outdir $TMPDIR \
-        $1
+        "$1"
 }
 
 function filter_new_file_name {
@@ -238,9 +240,9 @@ function filter_new_file_name {
     | awk -F/ '{print $2}'
 }
 
-converted_file_name=$(convert $1 | filter_new_file_name)
+converted_file_name=$(convert "$1" | filter_new_file_name)
 
-cp $TMPDIR/$converted_file_name $2
+cp $TMPDIR/$converted_file_name "$2"
 rm $TMPDIR/$converted_file_name
 ```
 
@@ -337,12 +339,22 @@ end
 
 ### Specify multiple buckets
 
-Arc lets you specify a bucket on a per defintion basis. In case you want to use
+Arc lets you specify a bucket on a per definition basis. In case you want to use
 multiple buckets, you can specify a bucket in the uploader definition file
 like this:
 
 ```elixir
 def bucket, do: :some_custom_bucket_name
+```
+
+### Specify multiple asset hosts
+
+Arc lets you specify an asset host on a per definition basis. In case you want to use
+multiple hosts, you can specify an asset_host in the uploader definition file
+like this:
+
+```elixir
+def asset_host, do: "https://example.com"
 ```
 
 ### Access Control Permissions
@@ -406,7 +418,7 @@ defmodule Avatar do
   use Arc.Definition
   @extension_whitelist ~w(.jpg .jpeg .gif .png)
 
-  def validate({file, _}) do   
+  def validate({file, _}) do
     file_extension = file.file_name |> Path.extname() |> String.downcase()
     Enum.member?(@extension_whitelist, file_extension)
   end
@@ -444,13 +456,18 @@ Example:
 
 ```elixir
 # Without a scope:
-{:ok, path} = DummyDefinition.store("/Images/me.png")
-:ok = DummyDefinition.delete(path)
+{:ok, original_filename} = Avatar.store("/Images/me.png")
+:ok = Avatar.delete(original_filename)
 
 # With a scope:
 user = Repo.get! User, 1
-{:ok, path} = DummyDefinition.store({"/Images/me.png", user})
-:ok = DummyDefinition.delete({path, user})
+{:ok, original_filename} = Avatar.store({"/Images/me.png", user})
+:ok = Avatar.delete({original_filename, user})
+# or
+user = Repo.get!(User, 1)
+{:ok, original_filename} = Avatar.store({"/Images/me.png", user})
+user = Repo.get!(User, 1)
+:ok = Avatar.delete({user.avatar, user})
 ```
 
 ## Url Generation
@@ -551,7 +568,7 @@ defmodule Avatar do
 
   def acl(:thumb, _), do: :public_read
 
-  def validate({file, _}) do   
+  def validate({file, _}) do
     file_extension = file.file_name |> Path.extname |> String.downcase
     Enum.member?(@extension_whitelist, file_extension)
   end
